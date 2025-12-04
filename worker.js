@@ -1,9 +1,9 @@
 import fetch from "node-fetch";
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = https://jxsqmbistfnkeawfwuis.supabase.co;
-const SERVICE_ROLE_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp4c3FtYmlzdGZua2Vhd2Z3dWlzIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MzgzODA5MCwiZXhwIjoyMDc5NDE0MDkwfQ.aGSYpkzLtWXepupnSuL70EfEgGEQNiYNccdmFbpnoQM;
-const JOTFORM_API_KEY = 0a4b9a4f7f1f00ee5d400a2fc0c03f6a;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const JOTFORM_API_KEY = process.env.JOTFORM_API_KEY;
 const BUCKET = "offer-images";
 
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !JOTFORM_API_KEY) {
