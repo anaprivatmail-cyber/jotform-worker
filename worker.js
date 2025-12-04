@@ -1,6 +1,7 @@
 import fetch from "node-fetch";
 import { createClient } from "@supabase/supabase-js";
 
+// ENV VARIABLES
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const JOTFORM_API_KEY = process.env.JOTFORM_API_KEY;
@@ -11,23 +12,38 @@ if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !JOTFORM_API_KEY) {
   process.exit(1);
 }
 
+// Supabase client
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
+// ----------------------------------------------
+// FETCH ALL SUBMISSIONS THAT CONTAIN file_uris
+// ----------------------------------------------
 async function getPending() {
   const { data, error } = await supabase
     .from("provider_submissions_api")
-    .select("submission_id, raw_payload");
+    .select("submission_id, file_uris");
 
   if (error) throw error;
-  return data;
+
+  // Filter only submissions with file URLs
+  return data.filter(
+    (s) => Array.isArray(s.file_uris) && s.file_uris.length > 0
+  );
 }
 
-async function downloadImage(submissionId, fieldId, filename) {
-  const url = `https://eu-api.jotform.com/file/${submissionId}/${fieldId}?apiKey=${JOTFORM_API_KEY}`;
+// ----------------------------------------------
+// DOWNLOAD AN IMAGE FROM JOTFORM FILE API
+// ----------------------------------------------
+// IMPORTANT: fileIndex is ALWAYS 0 (first file), 
+// because JotForm FILE API does NOT use fieldId.
+// It uses INDEX of the uploaded file in submission.
+async function downloadImage(submissionId, fileIndex, filename) {
+  const url = `https://eu-api.jotform.com/file/${submissionId}/${fileIndex}?apiKey=${JOTFORM_API_KEY}`;
+
   const res = await fetch(url);
 
   if (!res.ok) {
-    console.log("Download failed:", res.status, url);
+    console.log(`❌ Download failed (${res.status}): ${url}`);
     return null;
   }
 
@@ -37,6 +53,9 @@ async function downloadImage(submissionId, fieldId, filename) {
   return { buffer, contentType };
 }
 
+// ----------------------------------------------
+// UPLOAD IMAGE TO SUPABASE STORAGE
+// ----------------------------------------------
 async function uploadToStorage(path, buffer, contentType) {
   const { error } = await supabase.storage
     .from(BUCKET)
@@ -46,54 +65,80 @@ async function uploadToStorage(path, buffer, contentType) {
     });
 
   if (error) {
-    console.log("Upload error:", error);
+    console.log("❌ Upload error:", error.message);
     return null;
   }
+
   return true;
 }
 
+// ----------------------------------------------
+// SAVE IMAGE RECORD IN provider_images TABLE
+// ----------------------------------------------
 async function saveRecord(submissionId, fieldId, originalUrl, storedPath) {
-  await supabase.from("provider_images").insert({
+  const { error } = await supabase.from("provider_images").insert({
     submission_id: submissionId,
     field_id: fieldId,
     original_url: originalUrl,
     stored_path: storedPath,
   });
+
+  if (error) {
+    console.log("❌ DB insert error:", error.message);
+  }
 }
 
+// ----------------------------------------------
+// MAIN WORKER FUNCTION
+// ----------------------------------------------
 async function run() {
-  console.log("Worker started…");
+  console.log("🚀 Worker started…");
 
   const submissions = await getPending();
 
+  console.log(`📌 Found ${submissions.length} submissions with images`);
+
   for (const sub of submissions) {
     const submissionId = sub.submission_id;
-    const answers = sub.raw_payload?.answers || {};
+    const fileList = sub.file_uris;
 
-    for (const fieldId of Object.keys(answers)) {
-      const ans = answers[fieldId];
+    console.log(`\n📁 Processing submission ${submissionId}`);
+    
+    let fileIndex = 0; // IMPORTANT: JotForm uses INDEX, not fieldId
 
-      if (ans?.type === "control_fileupload") {
-        const urls = Array.isArray(ans.answer) ? ans.answer : [ans.answer];
+    for (const file of fileList) {
+      const originalUrl = file.originalUrl;
+      const fieldId = file.fieldId;
+      const filename = originalUrl.split("/").pop();
 
-        for (const url of urls) {
-          const filename = url.split("/").pop();
-          const dl = await downloadImage(submissionId, fieldId, filename);
+      console.log(`🔎 Attempting download: fileIndex=${fileIndex} → ${originalUrl}`);
 
-          if (!dl) continue;
-
-          const path = `${submissionId}/${fieldId}/${filename}`;
-          const uploaded = await uploadToStorage(path, dl.buffer, dl.contentType);
-          if (!uploaded) continue;
-
-          await saveRecord(submissionId, fieldId, url, path);
-          console.log("Stored:", path);
-        }
+      // Step 1: Download
+      const dl = await downloadImage(submissionId, fileIndex, filename);
+      if (!dl) {
+        fileIndex++;
+        continue;
       }
+
+      // Step 2: Upload to Supabase
+      const path = `${submissionId}/${fieldId}/${filename}`;
+      const uploaded = await uploadToStorage(path, dl.buffer, dl.contentType);
+      if (!uploaded) {
+        fileIndex++;
+        continue;
+      }
+
+      // Step 3: Save DB record
+      await saveRecord(submissionId, fieldId, originalUrl, path);
+
+      console.log(`✅ Stored image: ${path}`);
+
+      fileIndex++;
     }
   }
 
-  console.log("Worker finished.");
+  console.log("✨ Worker finished.");
 }
 
-run();
+// Run
+run().catch((err) => console.error("FATAL ERROR:", err));
