@@ -1,0 +1,29 @@
+name: JotForm → Supabase Image Worker
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"     # zaženi vsakih 10 minut
+  workflow_dispatch:            # omogoča ročni zagon
+
+jobs:
+  run-worker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run worker script
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          JOTFORM_API_KEY: ${{ secrets.JOTFORM_API_KEY }}
+        run: node worker.js
